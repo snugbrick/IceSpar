@@ -1,0 +1,19 @@
+[package]
+name = "ice_spar"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+russimp-ng = "3.2.7"
+
+glam = { version = "0.25", features = ["bytemuck"] }
+bytemuck = { version = "1.14", features = ["derive"] }
+
+wgpu = "0.19"
+winit = "0.29"
+pollster = "0.3"
+
+[dependencies.image]
+version = "0.24"
+default-features = false
+features = ["png", "jpeg"]
