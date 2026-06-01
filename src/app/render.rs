@@ -41,6 +41,7 @@ impl RenderPreparation {
 		pipeline: &PipelineIS,
 		mesh_buffers: &[VIBufferFromMesh<'a>],
 		bindgroup: &[&BindGroup],
+		mesh_bindgroups: Option<&[&BindGroup]>,
 	) {
 		let render_des = RenderPassDescriptor {
 			label: Some("Render Pass"),
@@ -73,7 +74,10 @@ impl RenderPreparation {
 		for bind_group_index in 0..bindgroup.len() {
 			renderpass.set_bind_group(bind_group_index as u32, &bindgroup[bind_group_index], &[]);
 		}
-		for vi_buffer in mesh_buffers.iter() {
+		for (i, vi_buffer) in mesh_buffers.iter().enumerate() {
+			if let Some(groups) = mesh_bindgroups {
+				renderpass.set_bind_group(bindgroup.len() as u32, &groups[i], &[]);
+			}
 			renderpass.set_vertex_buffer(0, vi_buffer.vertex_buffer.buffer.slice(..));
 			renderpass.set_index_buffer(vi_buffer.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 			renderpass.draw_indexed(0..vi_buffer.index_count, 0, 0..1);

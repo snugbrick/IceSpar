@@ -1,27 +1,30 @@
 use std::borrow::Cow;
 
-use glam::{Mat4, Vec3};
 use ice_spar::{
 	app::{app::App, event_handle::EventHandle, render::RenderPreparation},
 	ingredient::{
-		bindgroup::BindGroupIS, buffer::VIBufferFromMesh, buffer_layout::vertex_buffer_layout_vi,
-		objects::camera::CameraIS, pipeline::PipelineIS,
+		bindgroup::BindGroupIS,
+		buffer::{BufferIS, VIBufferFromMesh},
+		buffer_layout::vertex_buffer_layout_vi,
+		objects::camera::CameraIS,
+		pipeline::PipelineIS,
+		texture::TextureIS,
 	},
 	resources::model::Model,
 };
 use russimp_ng::{Vector3D, camera::Camera};
 use wgpu::{
 	BindGroupEntry, BindGroupLayoutEntry, BufferUsages, ColorTargetState, FragmentState,
-	ShaderStages, VertexState, util::DeviceExt,
+	ShaderStages, VertexState,
 };
-use winit::{event_loop::EventLoop, keyboard::KeyCode};
+use winit::{event::MouseButton, event_loop::EventLoop, keyboard::KeyCode};
 
 fn main() {
 	let event_loop = EventLoop::new().unwrap();
 	let mut app = App::instance(&event_loop);
 	app.enable_depth_test();
 
-	let model = Model::new(String::from("../src/tree.fbx")).transform_to_world_space();
+	let model = Model::new(String::from("src/tree.fbx")).init_nodes_tree();
 
 	let mesh_buffers: Vec<VIBufferFromMesh> = model
 		.content
@@ -55,13 +58,12 @@ fn main() {
 		},
 	};
 
-	let uniform_buffer = app
-		.device
-		.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-			label: Some("Uniform Buffer"),
-			contents: bytemuck::cast_slice(&camera.cal_view_proj_mat().to_cols_array_2d()),
-			usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-		});
+	let uniform_buffer = BufferIS::new(
+		&app.device,
+		bytemuck::cast_slice(&camera.cal_view_proj_mat().to_cols_array_2d()),
+		BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+	)
+	.buffer;
 
 	let camera_bindgroup = BindGroupIS::new(
 		&app.device,
@@ -81,57 +83,203 @@ fn main() {
 		}],
 	);
 
+	let (default_tex, default_sampler) = TextureIS::default_white(&app.device, &app.queue);
+
+	let material_layout_entries = [
+		BindGroupLayoutEntry {
+			binding: 0,
+			visibility: ShaderStages::FRAGMENT,
+			ty: wgpu::BindingType::Texture {
+				sample_type: wgpu::TextureSampleType::Float { filterable: true },
+				view_dimension: wgpu::TextureViewDimension::D2,
+				multisampled: false,
+			},
+			count: None,
+		},
+		BindGroupLayoutEntry {
+			binding: 1,
+			visibility: ShaderStages::FRAGMENT,
+			ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+			count: None,
+		},
+		BindGroupLayoutEntry {
+			binding: 2,
+			visibility: ShaderStages::FRAGMENT,
+			ty: wgpu::BindingType::Buffer {
+				ty: wgpu::BufferBindingType::Uniform,
+				has_dynamic_offset: false,
+				min_binding_size: None,
+			},
+			count: None,
+		},
+	];
+
+	let texlors = model.texlors.as_ref().unwrap();
+	let mut material_bindgroups: Vec<BindGroupIS> = Vec::new();
+
+	for tex_unit in texlors {
+		let diffuse_color = tex_unit
+			.diffuse_color
+			.as_ref()
+			.and_then(|dc| dc.values().next())
+			.copied()
+			.unwrap_or(glam::Vec4::new(1.0, 1.0, 1.0, 1.0));
+
+		let diffuse_buffer = BufferIS::new(
+			&app.device,
+			bytemuck::cast_slice(&diffuse_color.to_array()),
+			BufferUsages::UNIFORM,
+		)
+		.buffer;
+
+		let use_russimp_tex = tex_unit.texture.as_ref().and_then(|tm| tm.values().next());
+
+		let bindgroup = if let Some(tex_rc) = use_russimp_tex {
+			let tex = tex_rc.borrow();
+			let vs = TextureIS::from_russimp_texture(&tex, &app.device, &app.queue);
+			BindGroupIS::new(
+				&app.device,
+				&material_layout_entries,
+				&[
+					BindGroupEntry {
+						binding: 0,
+						resource: wgpu::BindingResource::TextureView(&vs.view),
+					},
+					BindGroupEntry {
+						binding: 1,
+						resource: wgpu::BindingResource::Sampler(&vs.sampler),
+					},
+					BindGroupEntry {
+						binding: 2,
+						resource: diffuse_buffer.as_entire_binding(),
+					},
+				],
+			)
+		} else {
+			let view = default_tex.create_view(&wgpu::TextureViewDescriptor::default());
+			BindGroupIS::new(
+				&app.device,
+				&material_layout_entries,
+				&[
+					BindGroupEntry {
+						binding: 0,
+						resource: wgpu::BindingResource::TextureView(&view),
+					},
+					BindGroupEntry {
+						binding: 1,
+						resource: wgpu::BindingResource::Sampler(&default_sampler),
+					},
+					BindGroupEntry {
+						binding: 2,
+						resource: diffuse_buffer.as_entire_binding(),
+					},
+				],
+			)
+		};
+
+		material_bindgroups.push(bindgroup);
+	}
+
 	let shader_module = app
 		.device
 		.create_shader_module(wgpu::ShaderModuleDescriptor {
 			label: Some("Shader"),
-			source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shaders/shader.wgsl"))),
+			source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("../src/shaders/shader.wgsl"))),
 		});
 
-	let layout = vertex_buffer_layout_vi();
-	let pipeline = PipelineIS::begin_layout(&app.device, &[&camera_bindgroup.bindgrouplayout])
-		.set_depthstencil_state(wgpu::DepthStencilState {
-			format: wgpu::TextureFormat::Depth32Float,
-			depth_write_enabled: true,
-			depth_compare: wgpu::CompareFunction::Less,
-			stencil: wgpu::StencilState::default(),
-			bias: wgpu::DepthBiasState::default(),
-		})
-		.get_pipeline(
-			&app.device,
-			VertexState {
-				module: &shader_module,
-				entry_point: "vs_main",
-				buffers: &[layout.buffer_layout],
-			},
-			FragmentState {
-				module: &shader_module,
-				entry_point: "fs_main",
-				targets: &[Some(ColorTargetState {
-					format: app.surface_conf.format,
-					blend: Some(wgpu::BlendState::REPLACE),
-					write_mask: wgpu::ColorWrites::ALL,
-				})],
-			},
-		);
+	let pipeline = PipelineIS::begin_layout(
+		&app.device,
+		&[
+			&camera_bindgroup.bindgrouplayout,
+			&material_bindgroups[0].bindgrouplayout,
+		],
+	)
+	.set_depthstencil_state(wgpu::DepthStencilState {
+		format: wgpu::TextureFormat::Depth32Float,
+		depth_write_enabled: true,
+		depth_compare: wgpu::CompareFunction::Less,
+		stencil: wgpu::StencilState::default(),
+		bias: wgpu::DepthBiasState::default(),
+	})
+	.get_pipeline(
+		&app.device,
+		VertexState {
+			module: &shader_module,
+			entry_point: "vs_main",
+			buffers: &[vertex_buffer_layout_vi().buffer_layout],
+		},
+		FragmentState {
+			module: &shader_module,
+			entry_point: "fs_main",
+			targets: &[Some(ColorTargetState {
+				format: app.surface_conf.format,
+				blend: Some(wgpu::BlendState::REPLACE),
+				write_mask: wgpu::ColorWrites::ALL,
+			})],
+		},
+	);
+
+	let look_at = glam::Vec3::new(
+		camera.camera.look_at.x,
+		camera.camera.look_at.y,
+		camera.camera.look_at.z,
+	);
+	let pos = glam::Vec3::new(
+		camera.camera.position.x,
+		camera.camera.position.y,
+		camera.camera.position.z,
+	);
+	let delta = pos - look_at;
+	let mut distance = delta.length();
+	let mut yaw = delta.z.atan2(delta.x);
+	let mut pitch = (delta.y / distance).asin();
 
 	let event_handle = EventHandle::new();
 
 	EventHandle::run(event_handle, event_loop, app, move |eh, app| {
 		let dt = eh.delta_time as f32;
+		let speed = 300.0 * dt;
+		let sensitivity = 0.005f32;
 
-		if eh.is_key_pressed(KeyCode::KeyW) {
-			camera.camera.position.z -= 100.0 * dt;
+		if eh.is_mouse_pressed(MouseButton::Right) {
+			yaw += eh.cursor_delta.0 as f32 * sensitivity;
+			pitch += eh.cursor_delta.1 as f32 * sensitivity;
+			pitch = pitch.clamp(-1.5, 1.5);
 		}
+		distance -= eh.scroll_delta.1 as f32 * 3.0;
+		distance = distance.clamp(1.0, 10000.0);
+
+		let forward = glam::Vec3::new(
+			pitch.cos() * yaw.cos(),
+			pitch.sin(),
+			pitch.cos() * yaw.sin(),
+		);
+		let right = glam::Vec3::new(yaw.sin(), 0.0, -yaw.cos()).normalize();
+
 		if eh.is_key_pressed(KeyCode::KeyS) {
-			camera.camera.position.z += 100.0 * dt;
+			camera.camera.look_at.x += forward.x * speed;
+			camera.camera.look_at.y += forward.y * speed;
+			camera.camera.look_at.z += forward.z * speed;
+		}
+		if eh.is_key_pressed(KeyCode::KeyW) {
+			camera.camera.look_at.x -= forward.x * speed;
+			camera.camera.look_at.y -= forward.y * speed;
+			camera.camera.look_at.z -= forward.z * speed;
 		}
 		if eh.is_key_pressed(KeyCode::KeyA) {
-			camera.camera.position.x -= 100.0 * dt;
+			camera.camera.look_at.x -= right.x * speed;
+			camera.camera.look_at.y -= right.y * speed;
+			camera.camera.look_at.z -= right.z * speed;
 		}
 		if eh.is_key_pressed(KeyCode::KeyD) {
-			camera.camera.position.x += 100.0 * dt;
+			camera.camera.look_at.x += right.x * speed;
+			camera.camera.look_at.y += right.y * speed;
+			camera.camera.look_at.z += right.z * speed;
 		}
+
+		camera.camera.position.x = camera.camera.look_at.x + distance * pitch.cos() * yaw.cos();
+		camera.camera.position.y = camera.camera.look_at.y + distance * pitch.sin();
+		camera.camera.position.z = camera.camera.look_at.z + distance * pitch.cos() * yaw.sin();
 		let mat_new = camera.cal_view_proj_mat();
 		app.queue.write_buffer(
 			&uniform_buffer,
@@ -140,7 +288,14 @@ fn main() {
 		);
 
 		let mut rp = RenderPreparation::prepare_render(app);
-		rp.record_renderpass(&pipeline, &mesh_buffers, &[&camera_bindgroup.bindgroup]);
+		let material_bg_list: Vec<&wgpu::BindGroup> =
+			material_bindgroups.iter().map(|bg| &bg.bindgroup).collect();
+		rp.record_renderpass(
+			&pipeline,
+			&mesh_buffers,
+			&[&camera_bindgroup.bindgroup],
+			Some(&material_bg_list),
+		);
 		rp.present(&app.queue);
 	});
 }

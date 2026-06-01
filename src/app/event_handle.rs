@@ -16,6 +16,7 @@ pub struct EventHandle {
 	mouse_buttons_pressed: HashSet<MouseButton>,
 	mouse_buttons_prev: HashSet<MouseButton>,
 	pub cursor_position: PhysicalPosition<f64>,
+	pub cursor_delta: (f64, f64),
 	pub scroll_delta: (f64, f64),
 
 	pub close_requested: bool,
@@ -35,6 +36,7 @@ impl EventHandle {
 			mouse_buttons_pressed: HashSet::new(),
 			mouse_buttons_prev: HashSet::new(),
 			cursor_position: PhysicalPosition::new(0.0, 0.0),
+			cursor_delta: (0.0, 0.0),
 			scroll_delta: (0.0, 0.0),
 
 			close_requested: false,
@@ -45,14 +47,14 @@ impl EventHandle {
 		}
 	}
 
-	pub fn process_event(&mut self, event: Event<()>) {
+	pub fn process_event(&mut self, event: &Event<()>) {
 		match event {
 			Event::WindowEvent { event, .. } => match event {
 				WindowEvent::CloseRequested => {
 					self.close_requested = true;
 				}
 				WindowEvent::Resized(size) => {
-					self.window_resize = Some(size);
+					self.window_resize = Some(*size);
 				}
 				WindowEvent::KeyboardInput {
 					event: key_event, ..
@@ -70,18 +72,20 @@ impl EventHandle {
 				}
 				WindowEvent::MouseInput { state, button, .. } => match state {
 					ElementState::Pressed => {
-						self.mouse_buttons_pressed.insert(button);
+						self.mouse_buttons_pressed.insert(*button);
 					}
 					ElementState::Released => {
 						self.mouse_buttons_pressed.remove(&button);
 					}
 				},
 				WindowEvent::CursorMoved { position, .. } => {
-					self.cursor_position = position;
+					self.cursor_delta.0 += position.x - self.cursor_position.x;
+					self.cursor_delta.1 += position.y - self.cursor_position.y;
+					self.cursor_position = *position;
 				}
 				WindowEvent::MouseWheel { delta, .. } => match delta {
 					MouseScrollDelta::LineDelta(x, y) => {
-						self.scroll_delta = (x as f64, y as f64);
+						self.scroll_delta = (*x as f64, *y as f64);
 					}
 					MouseScrollDelta::PixelDelta(pos) => {
 						self.scroll_delta = (pos.x, pos.y);
@@ -100,6 +104,7 @@ impl EventHandle {
 		self.keys_prev = self.keys_pressed.clone();
 		self.mouse_buttons_prev = self.mouse_buttons_pressed.clone();
 		self.scroll_delta = (0.0, 0.0);
+		self.cursor_delta = (0.0, 0.0);
 	}
 
 	pub fn is_key_pressed(&self, key: KeyCode) -> bool {
@@ -152,16 +157,14 @@ impl EventHandle {
 	{
 		let _ = event_loop.run(move |event, elwt| {
 			elwt.set_control_flow(ControlFlow::Poll);
-			let is_about_to_wait = matches!(&event, Event::AboutToWait);
-
-			self.process_event(event);
+			self.process_event(&event);
 
 			if self.close_requested {
 				elwt.exit();
 				return;
 			}
 
-			if is_about_to_wait {
+			if matches!(&event, Event::AboutToWait) {
 				let now = Instant::now();
 				self.delta_time = (now - self.last_frame).as_secs_f64();
 				self.last_frame = now;
