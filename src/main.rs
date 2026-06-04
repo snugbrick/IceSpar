@@ -24,7 +24,7 @@ fn main() {
 	let mut app = App::instance(&event_loop);
 	app.enable_depth_test();
 
-	let model = Model::new(String::from("src/tree.fbx")).init_nodes_tree();
+	let model = Model::new(String::from("src/blueberry.fbx")).init_nodes_tree();
 
 	let mesh_buffers: Vec<VIBufferFromMesh> = model
 		.content
@@ -58,125 +58,75 @@ fn main() {
 		},
 	};
 
-	let uniform_buffer = BufferIS::new(
+	let initial_mat = camera.cal_view_proj_mat();
+	let view_proj_buffer = BufferIS::new(
 		&app.device,
-		bytemuck::cast_slice(&camera.cal_view_proj_mat().to_cols_array_2d()),
+		bytemuck::cast_slice(&initial_mat.to_cols_array_2d()),
+		BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+	)
+	.buffer;
+
+	let initial_pos: [f32; 4] = [
+		camera.camera.position.x,
+		camera.camera.position.y,
+		camera.camera.position.z,
+		1.0,
+	];
+	let cam_pos_buffer = BufferIS::new(
+		&app.device,
+		bytemuck::cast_slice(&initial_pos),
 		BufferUsages::UNIFORM | BufferUsages::COPY_DST,
 	)
 	.buffer;
 
 	let camera_bindgroup = BindGroupIS::new(
 		&app.device,
-		&[BindGroupLayoutEntry {
-			binding: 0,
-			visibility: ShaderStages::VERTEX,
-			ty: wgpu::BindingType::Buffer {
-				ty: wgpu::BufferBindingType::Uniform,
-				has_dynamic_offset: false,
-				min_binding_size: None,
+		&[
+			BindGroupLayoutEntry {
+				binding: 0,
+				visibility: ShaderStages::VERTEX,
+				ty: wgpu::BindingType::Buffer {
+					ty: wgpu::BufferBindingType::Uniform,
+					has_dynamic_offset: false,
+					min_binding_size: None,
+				},
+				count: None,
 			},
-			count: None,
-		}],
-		&[BindGroupEntry {
-			binding: 0,
-			resource: uniform_buffer.as_entire_binding(),
-		}],
+			BindGroupLayoutEntry {
+				binding: 1,
+				visibility: ShaderStages::FRAGMENT,
+				ty: wgpu::BindingType::Buffer {
+					ty: wgpu::BufferBindingType::Uniform,
+					has_dynamic_offset: false,
+					min_binding_size: None,
+				},
+				count: None,
+			},
+		],
+		&[
+			BindGroupEntry {
+				binding: 0,
+				resource: view_proj_buffer.as_entire_binding(),
+			},
+			BindGroupEntry {
+				binding: 1,
+				resource: cam_pos_buffer.as_entire_binding(),
+			},
+		],
 	);
 
-	let (default_tex, default_sampler) = TextureIS::default_white(&app.device, &app.queue);
-
-	let material_layout_entries = [
-		BindGroupLayoutEntry {
-			binding: 0,
-			visibility: ShaderStages::FRAGMENT,
-			ty: wgpu::BindingType::Texture {
-				sample_type: wgpu::TextureSampleType::Float { filterable: true },
-				view_dimension: wgpu::TextureViewDimension::D2,
-				multisampled: false,
-			},
-			count: None,
-		},
-		BindGroupLayoutEntry {
-			binding: 1,
-			visibility: ShaderStages::FRAGMENT,
-			ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-			count: None,
-		},
-		BindGroupLayoutEntry {
-			binding: 2,
-			visibility: ShaderStages::FRAGMENT,
-			ty: wgpu::BindingType::Buffer {
-				ty: wgpu::BufferBindingType::Uniform,
-				has_dynamic_offset: false,
-				min_binding_size: None,
-			},
-			count: None,
-		},
-	];
+	let default_texs = TextureIS::create_default_textures(&app.device, &app.queue);
 
 	let texlors = model.texlors.as_ref().unwrap();
 	let mut material_bindgroups: Vec<BindGroupIS> = Vec::new();
 
 	for tex_unit in texlors {
-		let diffuse_color = tex_unit
-			.diffuse_color
-			.as_ref()
-			.and_then(|dc| dc.values().next())
-			.copied()
-			.unwrap_or(glam::Vec4::new(1.0, 1.0, 1.0, 1.0));
-
-		let diffuse_buffer = BufferIS::new(
+		let bindgroup = TextureIS::create_material_bindgroup(
 			&app.device,
-			bytemuck::cast_slice(&diffuse_color.to_array()),
-			BufferUsages::UNIFORM,
-		)
-		.buffer;
-
-		let use_russimp_tex = tex_unit.texture.as_ref().and_then(|tm| tm.values().next());
-
-		let bindgroup = if let Some(tex_rc) = use_russimp_tex {
-			let tex = tex_rc.borrow();
-			let vs = TextureIS::from_russimp_texture(&tex, &app.device, &app.queue);
-			BindGroupIS::new(
-				&app.device,
-				&material_layout_entries,
-				&[
-					BindGroupEntry {
-						binding: 0,
-						resource: wgpu::BindingResource::TextureView(&vs.view),
-					},
-					BindGroupEntry {
-						binding: 1,
-						resource: wgpu::BindingResource::Sampler(&vs.sampler),
-					},
-					BindGroupEntry {
-						binding: 2,
-						resource: diffuse_buffer.as_entire_binding(),
-					},
-				],
-			)
-		} else {
-			let view = default_tex.create_view(&wgpu::TextureViewDescriptor::default());
-			BindGroupIS::new(
-				&app.device,
-				&material_layout_entries,
-				&[
-					BindGroupEntry {
-						binding: 0,
-						resource: wgpu::BindingResource::TextureView(&view),
-					},
-					BindGroupEntry {
-						binding: 1,
-						resource: wgpu::BindingResource::Sampler(&default_sampler),
-					},
-					BindGroupEntry {
-						binding: 2,
-						resource: diffuse_buffer.as_entire_binding(),
-					},
-				],
-			)
-		};
-
+			&app.queue,
+			tex_unit,
+			&default_texs,
+		);
 		material_bindgroups.push(bindgroup);
 	}
 
@@ -282,10 +232,17 @@ fn main() {
 		camera.camera.position.z = camera.camera.look_at.z + distance * pitch.cos() * yaw.sin();
 		let mat_new = camera.cal_view_proj_mat();
 		app.queue.write_buffer(
-			&uniform_buffer,
+			&view_proj_buffer,
 			0,
 			bytemuck::cast_slice(&mat_new.to_cols_array_2d()),
 		);
+		let cam_pos: [f32; 4] = [
+			camera.camera.position.x,
+			camera.camera.position.y,
+			camera.camera.position.z,
+			1.0,
+		];
+		app.queue.write_buffer(&cam_pos_buffer, 0, bytemuck::cast_slice(&cam_pos));
 
 		let mut rp = RenderPreparation::prepare_render(app);
 		let material_bg_list: Vec<&wgpu::BindGroup> =

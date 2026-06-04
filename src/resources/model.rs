@@ -1,11 +1,11 @@
 use std::rc::Rc;
 
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 use russimp_ng::{
 	animation::Animation,
 	camera::Camera,
 	light::Light,
-	material::{Material, TextureType},
+	material::Material,
 	mesh::Mesh,
 	node::Node,
 	scene::{PostProcess, Scene},
@@ -99,20 +99,41 @@ impl Model {
 	) {
 		for &mesh_index in &node.meshes {
 			let mesh = &mut meshes[mesh_index as usize];
-			// ->1
+			// ->1 transform positions/normals/tangents/bitangents
 			for vertex in mesh.vertices.iter_mut() {
-				let v = glam::Vec3::new(vertex.x, vertex.y, vertex.z);
+				let v = Vec3::new(vertex.x, vertex.y, vertex.z);
 				let transformed = matrix.transform_point3(v);
 				vertex.x = transformed.x;
 				vertex.y = transformed.y;
 				vertex.z = transformed.z;
+			}
+			let normal_matrix = matrix.inverse().transpose();
+			for normal in mesh.normals.iter_mut() {
+				let n = Vec3::new(normal.x, normal.y, normal.z);
+				let transformed = normal_matrix.transform_vector3(n).normalize();
+				normal.x = transformed.x;
+				normal.y = transformed.y;
+				normal.z = transformed.z;
+			}
+			for tangent in mesh.tangents.iter_mut() {
+				let t = Vec3::new(tangent.x, tangent.y, tangent.z);
+				let transformed = normal_matrix.transform_vector3(t).normalize();
+				tangent.x = transformed.x;
+				tangent.y = transformed.y;
+				tangent.z = transformed.z;
+			}
+			for bitangent in mesh.bitangents.iter_mut() {
+				let b = Vec3::new(bitangent.x, bitangent.y, bitangent.z);
+				let transformed = normal_matrix.transform_vector3(b).normalize();
+				bitangent.x = transformed.x;
+				bitangent.y = transformed.y;
+				bitangent.z = transformed.z;
 			}
 			// ->2
 			loaded_texture.push(ISTextureUnit::from_mesh(
 				meshes,
 				mesh_index as usize,
 				materials,
-				TextureType::Diffuse,
 			));
 		}
 
