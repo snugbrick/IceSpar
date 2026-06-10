@@ -60,7 +60,7 @@ impl TextureIS {
 
 		Self::texdata2bindgroup(width, height, device, queue, &rgba_data, Some(texture_unit))
 	}
-	
+
 	fn texdata2bindgroup(
 		width: u32,
 		height: u32,
@@ -109,7 +109,7 @@ impl TextureIS {
 			mipmap_filter: wgpu::FilterMode::Nearest,
 			..Default::default()
 		});
-		
+
 		BindGroupIS::new(
 			device,
 			&[
@@ -156,8 +156,8 @@ impl TextureIS {
 						bytemuck::cast_slice(&texture_unit.unwrap().diffuse_color.to_array()),
 						BufferUsages::UNIFORM,
 					)
-						.buffer
-						.as_entire_binding(),
+					.buffer
+					.as_entire_binding(),
 				},
 			],
 		)
@@ -470,7 +470,6 @@ impl TextureIS {
 		texture
 	}
 
-	
 	pub fn create_default_textures(device: &Device, queue: &Queue) -> DefaultTextures {
 		let white = Self::make_1x1_texture(
 			device,
@@ -490,7 +489,7 @@ impl TextureIS {
 			&[128, 128, 255, 255],
 			TextureFormat::Rgba8Unorm,
 		);
-		
+
 		let sampler = device.create_sampler(&SamplerDescriptor {
 			address_mode_u: wgpu::AddressMode::Repeat,
 			address_mode_v: wgpu::AddressMode::Repeat,
@@ -500,7 +499,7 @@ impl TextureIS {
 			mipmap_filter: wgpu::FilterMode::Nearest,
 			..Default::default()
 		});
-		
+
 		DefaultTextures {
 			white_tex: white,
 			black_tex: black,
