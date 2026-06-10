@@ -17,10 +17,17 @@ pub struct App {
 	pub surface_conf: SurfaceConfiguration,
 
 	pub depth_texture: Option<Texture>,
+	pub depth_format: TextureFormat,
 }
 impl App {
-	pub fn instance(event_loop: &EventLoop<()>) -> Self {
-		let window = Arc::new(Window::new(event_loop).unwrap());
+	pub fn instance(
+		event_loop: &EventLoop<()>,
+		title: &str,
+		present_mode: wgpu::PresentMode,
+	) -> Self {
+		let window = Window::new(event_loop).unwrap();
+		window.set_title(title);
+		let window = Arc::new(window);
 		let app_init = block_on(async move {
 			let instance = Instance::new(wgpu::InstanceDescriptor {
 				backends: Backends::all(),
@@ -59,7 +66,7 @@ impl App {
 				format: sur_cap.formats[0],
 				width: size.width,
 				height: size.height,
-				present_mode: wgpu::PresentMode::Fifo,
+				present_mode,
 				desired_maximum_frame_latency: 2,
 				alpha_mode: sur_cap.alpha_modes[0],
 				view_formats: vec![],
@@ -77,9 +84,11 @@ impl App {
 			surface_conf: app_init.4,
 
 			depth_texture: None,
+			depth_format: TextureFormat::Depth32Float,
 		}
 	}
-	pub fn enable_depth_test(&mut self) {
+	pub fn enable_depth_test(&mut self, format: TextureFormat) {
+		self.depth_format = format;
 		let depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
 			label: Some("Depth Texture"),
 			size: Extent3d {
@@ -90,7 +99,7 @@ impl App {
 			mip_level_count: 1,
 			sample_count: 1,
 			dimension: TextureDimension::D2,
-			format: TextureFormat::Depth32Float,
+			format,
 			usage: TextureUsages::RENDER_ATTACHMENT,
 			view_formats: &[],
 		});

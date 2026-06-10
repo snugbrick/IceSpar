@@ -60,7 +60,7 @@ impl TextureIS {
 
 		Self::texdata2bindgroup(width, height, device, queue, &rgba_data, Some(texture_unit))
 	}
-	
+
 	fn texdata2bindgroup(
 		width: u32,
 		height: u32,
@@ -109,7 +109,7 @@ impl TextureIS {
 			mipmap_filter: wgpu::FilterMode::Nearest,
 			..Default::default()
 		});
-		
+
 		BindGroupIS::new(
 			device,
 			&[
@@ -156,9 +156,81 @@ impl TextureIS {
 						bytemuck::cast_slice(&texture_unit.unwrap().diffuse_color.to_array()),
 						BufferUsages::UNIFORM,
 					)
+					.buffer
+					.as_entire_binding(),
+				},
+				BindGroupEntry {
+					binding: 2,
+					resource: BufferIS::new(
+						device,
+						bytemuck::cast_slice(&texture_unit.unwrap().diffuse_color.to_array()),
+						BufferUsages::UNIFORM,
+					)
 						.buffer
 						.as_entire_binding(),
 				},
+			],
+		)
+	}
+	pub fn create_material_bindgroup(
+		device: &Device,
+		queue: &Queue,
+		texture_unit: &ISTextureUnit,
+		defaults: &DefaultTextures,
+	) -> BindGroupIS {
+		let base_color_view = Self::upload_or_default(
+			device,
+			queue,
+			&texture_unit.base_color,
+			&defaults.white_tex,
+			true,
+		);
+		let normal_view = Self::upload_or_default(
+			device,
+			queue,
+			&texture_unit.normal,
+			&defaults.normal_tex,
+			false,
+		);
+		let roughness_view = Self::upload_or_default(
+			device,
+			queue,
+			&texture_unit.roughness,
+			&defaults.white_tex,
+			false,
+		);
+		let metalness_view = Self::upload_or_default(
+			device,
+			queue,
+			&texture_unit.metalness,
+			&defaults.black_tex,
+			false,
+		);
+		let ao_view = Self::upload_or_default(
+			device,
+			queue,
+			&texture_unit.ambient_occlusion,
+			&defaults.white_tex,
+			false,
+		);
+		let emissive_view = Self::upload_or_default(
+			device,
+			queue,
+			&texture_unit.emissive,
+			&defaults.black_tex,
+			true,
+		);
+
+		let material_uniforms = MaterialUniforms {
+			diffuse_color: texture_unit.diffuse_color.to_array(),
+			specular_color: texture_unit.specular_color.to_array(),
+			ambient_color: texture_unit.ambient_color.to_array(),
+			emissive_color: texture_unit.emissive_color.to_array(),
+			params: [
+				1.0,
+				texture_unit.opacity_value,
+				texture_unit.shininess,
+				texture_unit.reflectivity,
 			],
 		)
 	}
@@ -470,7 +542,6 @@ impl TextureIS {
 		texture
 	}
 
-	
 	pub fn create_default_textures(device: &Device, queue: &Queue) -> DefaultTextures {
 		let white = Self::make_1x1_texture(
 			device,
@@ -490,7 +561,7 @@ impl TextureIS {
 			&[128, 128, 255, 255],
 			TextureFormat::Rgba8Unorm,
 		);
-		
+
 		let sampler = device.create_sampler(&SamplerDescriptor {
 			address_mode_u: wgpu::AddressMode::Repeat,
 			address_mode_v: wgpu::AddressMode::Repeat,
@@ -500,7 +571,7 @@ impl TextureIS {
 			mipmap_filter: wgpu::FilterMode::Nearest,
 			..Default::default()
 		});
-		
+
 		DefaultTextures {
 			white_tex: white,
 			black_tex: black,

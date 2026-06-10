@@ -173,7 +173,7 @@ impl EventHandle {
 					app.surface_conf.width = size.width;
 					app.surface_conf.height = size.height;
 					app.surface.configure(&app.device, &app.surface_conf);
-					app.enable_depth_test();
+					app.enable_depth_test(app.depth_format);
 				}
 				callback(&mut self, &mut app);
 				self.end_frame();
